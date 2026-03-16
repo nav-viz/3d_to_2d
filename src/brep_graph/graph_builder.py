@@ -1,6 +1,7 @@
 """BRep graph builder."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
@@ -199,7 +200,6 @@ class GraphBuilder:
         n2: Tuple[float, float, float],
     ) -> float:
         """Compute the dihedral angle (radians) between two face normals."""
-        import math
         dot = sum(a * b for a, b in zip(n1, n2))
         mag1 = math.sqrt(sum(x ** 2 for x in n1))
         mag2 = math.sqrt(sum(x ** 2 for x in n2))
@@ -215,7 +215,6 @@ class GraphBuilder:
         Build adjacency edges based on Euclidean proximity of face centres
         when no shared topological edges are available.
         """
-        import math
         node_list = list(nodes.values())
         graph_edges: Dict[int, BRepEdge] = {}
         adjacency: Dict[int, List[int]] = {nid: [] for nid in nodes}

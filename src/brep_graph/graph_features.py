@@ -1,6 +1,7 @@
 """Feature extraction from a BRep graph for AI model input."""
 from __future__ import annotations
 
+import math
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -89,7 +90,6 @@ class GraphFeatureExtractor:
         Returns:
             NumPy float32 array of shape ``(num_edges, EDGE_FEATURE_DIM)``.
         """
-        import math
         edges = list(self._graph.edges.values())
         if not edges:
             return np.zeros((0, self.EDGE_FEATURE_DIM), dtype=np.float32)
@@ -160,7 +160,6 @@ class GraphFeatureExtractor:
             areas.append(node.area)
             curvatures.append(node.curvature)
 
-        import math
         total = sum(type_counts.values()) or 1
         entropy = -sum(
             (c / total) * math.log2(c / total) for c in type_counts.values() if c > 0

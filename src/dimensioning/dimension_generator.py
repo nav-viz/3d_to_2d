@@ -1,6 +1,7 @@
 """Dimension candidate generator following ISO 129 / ASME Y14 rules."""
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
@@ -280,7 +281,6 @@ class DimensionGenerator:
             for j in range(i + 1, len(cylinder_nodes)):
                 ni = cylinder_nodes[i]
                 nj = cylinder_nodes[j]
-                import math
                 dx = nj.center[0] - ni.center[0]
                 dy = nj.center[1] - ni.center[1]
                 dist = math.sqrt(dx * dx + dy * dy)

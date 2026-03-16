@@ -1,6 +1,7 @@
 """PNG renderer for DXF files."""
 from __future__ import annotations
 
+import math
 import os
 
 from src.utils.logger import get_logger
@@ -165,7 +166,6 @@ class PNGRenderer:
             px1, py1 = world_to_pixel(ex, ey)
             draw_line_bresenham(canvas, px0, py0, px1, py1)
 
-        import math
         for cx, cy, r in circles:
             pcx, pcy = world_to_pixel(cx, cy)
             pr = int(r / rng_x * (width_px - 40))
