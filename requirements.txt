@@ -1,0 +1,14 @@
+# Core dependencies (required)
+numpy>=1.24.0
+ezdxf>=1.0.0
+pytest>=7.0.0
+flake8>=6.0.0
+
+# Optional heavy dependencies (uncomment to enable AI/DB features)
+# torch>=2.0.0
+# torch-geometric>=2.3.0
+# neo4j>=5.0.0
+# xgboost>=1.7.0
+# ortools>=9.5.0
+# opencv-python>=4.8.0
+# pythonOCC-core>=7.7.0
