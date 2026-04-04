@@ -1,0 +1,72 @@
+# Structure of H5DF Files
+- The hierarchical B-Rep graphs are stored in H5DF files, which can be opened using the Python package h5py.
+- There is a H5DF file for each dataset split.
+- The H5DF files provided for the MFCAD++ dataset already have been processed into batches with a maximum of 10,000 nodes in each batch.
+- The H5DF can maintain a hierarchical structure, an example of the general layout of a H5Df file is shown below:
+
+						     H5DF File
+							|
+						________________
+						|		|
+					   h5_group_1	   h5_group_2
+					  	|		|
+					 _______________	________
+				  	|		|		|
+				  h5_dataset_1	  h5_dataset_2	   h5_dataset_3
+
+
+- The H5DF file can be made up of a set of groups, where each group can have sets of datasets attributed to them.
+- In the files provided the structure below is used:
+
+
+						    train.h5
+							|
+						 ______________  
+						|		|
+					     batch_1	      batch_n
+					     	|
+______________________________________________________________________________
+|	|	|		|		|		|		|
+V_1    V_2   A_1_idx        A_1_values      A_1_shape       .....          labels 
+
+
+- Each group is a different batch and each dataset is used to describe the hierarchical graphs in the batch.
+- For the node features, the information has been stacked and for the adjacency matrices, they are disjoint along the diagonal.
+- Adjacency matrices have been stored sparsely, with information on the indices of edges, values of edges and shape of the matrix, the tf.sparse.to_dense function in TensorFlow.
+- Below is a list of all the datasets:
+
+CAD_model - name of CAD models in batch
+idx - indexs of CAD models in batch
+V_1 - features for B-Rep graph level -> [surface area, centroid x coord, centroid y coord, centroid z coord, surface type]
+V_2 - features for mesh graph level -> [normal x coord, normal y coord, normal z coord, d coefficient]
+labels - machining feature class labels
+
+A_1_idx - idxs for edges in adjacency matrix relating to B-Rep graph level
+A_1_values - values of edges in adjacency matrix relating to B-Rep graph level
+A_1_shape - shape of adjacency matrix relating to B-Rep graph level
+
+A_2_idx - idxs for edges in adjacency matrix relating to mesh graph level
+A_2_values - values of edges in adjacency matrix relating to mesh graph level
+A_2_shape - shape of adjacency matrix relating to mesh graph level
+
+A_3_idx - idxs for edges in incidence matrix between graph levels
+A_3_values - values of edges in incidence matrix between graph levels
+A_3_shape - shape of incidence matrix between graph levels
+
+E_1_idx - idxs for edges in adjacency matrix relating to convex edges in B-Rep graph level
+E_1_values - values of edges in adjacency matrix relating to convex edges in B-Rep graph level
+E_1_shape - shape of adjacency matrix relating to convex edges in B-Rep graph level
+
+E_2_idx - idxs for edges in adjacency matrix relating to concave edges in B-Rep graph level
+E_2_values - values of edges in adjacency matrix relating to concave edges in B-Rep graph level
+E_2_shape - shape of adjacency matrix relating to concave edges in B-Rep graph level
+
+E_3_idx - idxs for edges in adjacency matrix relating to smooth edges in B-Rep graph level
+E_3_values - values of edges in adjacency matrix relating to smooth edges in B-Rep graph level
+E_3_shape - shape of adjacency matrix relating to smooth edges in B-Rep graph level
+
+facet_labels - labels per each facet in mesh graph level
+
+A_4_idx - idxs for edges in incidence matrix between graph levels (Now redundant)
+A_4_values - values of edges in incidence matrix between graph levels (Now redundant)
+A_4_shape - shape of incidence matrix between graph levels (Now redundant)

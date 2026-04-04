@@ -1,0 +1,31 @@
+# Feature Labels
+
+- This text file contains the label id for each machining feature in the dataset.
+- A label id is assigned to each B-Rep face in a CAD model denoting the machining feature it belongs to.
+
+The labels are as follows:
+0 - Chamfer
+1 - Through hole
+2 - Triangular passage
+3 - Rectangular passage
+4 - 6-sided passage
+5 - Triangular through slot
+6 - Rectangular through slot
+7 - Circular through slot
+8 - Rectangular through step
+9 - 2-sided through step
+10 - Slanted through step
+11 - O-ring
+12 - Blind hole
+13 - Triangular pocket
+14 - Rectangular pocket
+15 - 6-sided pocket
+16 - Circular end pocket
+17 - Rectangular blind slot
+18 - Vertical circular end blind slot
+19 - Horizontal circular end blind slot
+20 - Triangular blind step
+21 - Circular blind step
+22 - Rectangular blind step
+23 - Round
+24 - Stock

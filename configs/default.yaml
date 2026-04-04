@@ -1,0 +1,119 @@
+# =============================================================================
+# cad_automation/configs/default.yaml
+# Master configuration for the hybrid CAD automation pipeline.
+# All paths are relative to the project root (cad_automation/).
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+paths:
+  data_root: "data/mfcad_plus/hierarchical_graphs"
+  train_h5: "data/mfcad_plus/hierarchical_graphs/training_MFCAD++.h5"
+  val_h5:   "data/mfcad_plus/hierarchical_graphs/val_MFCAD++.h5"
+  test_h5:  "data/mfcad_plus/hierarchical_graphs/test_MFCAD++.h5"
+  checkpoints: "checkpoints"
+  logs: "logs"
+  output_dxf: "output"   # auto-created at runtime
+
+# ---------------------------------------------------------------------------
+# Neo4j Knowledge Graph
+# ---------------------------------------------------------------------------
+neo4j:
+  uri: "bolt://localhost:7687"
+  user: "neo4j"
+  password: "12345678"          # change before running
+  database: "cad-kg"
+  max_connection_lifetime: 3600
+  max_connection_pool_size: 50
+  connection_acquisition_timeout: 60
+  encrypted: false
+
+# ---------------------------------------------------------------------------
+# Graph / Dataset
+# ---------------------------------------------------------------------------
+graph:
+  # Node feature dimensionality in the H5 files (V_1 = face features)
+  face_feat_dim: 10       # extend here when using V_2 vertex features
+  edge_feat_dim: 0        # set > 0 when edge features are available
+  # Normalise face features before feeding to GNN
+  normalise_features: true
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+model:
+  type: "hgt"            # "hgt" | "graphsage"
+  in_feats: 10           # must match graph.face_feat_dim
+  hidden_dim: 256
+  out_feats: 25          # number of machining-feature classes (MFCAD++)
+  num_layers: 3
+  num_heads: 4           # HGT only
+  dropout: 0.2
+  use_norm: true
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+training:
+  batch_size: 4          # ← Change from 1 to 4
+  epochs: 30
+  learning_rate: 0.001
+  patience: 10
+  weight_decay: 0.0005
+  scheduler: "cosine"    # "cosine" | "step" | "none"
+  step_size: 30          # for StepLR
+  gamma: 0.5             # for StepLR
+  patience: 15           # early-stopping patience
+  log_every: 5           # log every N epochs
+  save_best: true
+  seed: 42
+
+# ---------------------------------------------------------------------------
+# Inference
+# ---------------------------------------------------------------------------
+inference:
+  confidence_threshold: 0.6   # minimum softmax prob to accept a prediction
+  batch_size: 1                # per-STEP inference is typically single-graph
+
+# ---------------------------------------------------------------------------
+# View Selection (reasoning)
+# ---------------------------------------------------------------------------
+view_selection:
+  max_views: 6
+  min_confidence: 0.5
+  view_candidates:
+    - "front"
+    - "top"
+    - "right"
+    - "bottom"
+    - "left"
+    - "isometric"
+  # Complexity thresholds (face count)
+  simple_max_faces: 50
+  medium_max_faces: 300
+
+# ---------------------------------------------------------------------------
+# Drawing / DXF Export
+# ---------------------------------------------------------------------------
+drawing:
+  sheet_size: "A2"          # A0/A1/A2/A3/A4
+  scale: "1:1"
+  line_weight_visible: 0.35  # mm
+  line_weight_hidden:  0.18  # mm
+  dimension_text_height: 3.5 # mm
+  arrow_size: 2.5            # mm
+  gdt_text_height: 2.5       # mm
+  # CSP solver timeout in seconds
+  csp_timeout: 5.0
+  # Dimension placement strategy: "csp" | "greedy"
+  placement_strategy: "csp"
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: "INFO"          # DEBUG / INFO / WARNING / ERROR
+  rotation: "10 MB"
+  retention: "7 days"
+  colorize: true
