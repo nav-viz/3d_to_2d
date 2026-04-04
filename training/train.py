@@ -1,8 +1,7 @@
 """
 training/train.py
 =================
-Fixed training script for MFCAD++ with variable-sized graphs.
-Supports HGT + GraphSAGE, dynamic feature dim (5), and proper variable-node batching.
+Improved training script with fixed batching for variable-sized graphs + support for 10-dim features.
 """
 
 from __future__ import annotations
@@ -35,10 +34,6 @@ except ImportError:
     _SKLEARN = False
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -63,10 +58,6 @@ def _make_scheduler(optimiser, cfg, num_epochs):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Training Loop (Fixed for variable graph sizes)
-# ---------------------------------------------------------------------------
-
 def train(
     model: nn.Module,
     train_loader,
@@ -86,11 +77,10 @@ def train(
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    device = torch.device("cpu")   # Change to "cuda" later when DGL CUDA is installed
+    device = torch.device("cpu")
     logger.info(f"Training on device: {device}")
     model = model.to(device)
 
-    # === Optimiser ===
     optimiser = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
     scheduler = _make_scheduler(optimiser, cfg, epochs)
     criterion = nn.CrossEntropyLoss()
@@ -106,10 +96,8 @@ def train(
         train_loss = 0.0
         all_preds, all_labels = [], []
 
-        # === Train Loop - handles variable batch format ===
         for batch_items in train_loader:
-            # batch_items is a list of (g, labels) tuples
-            for item in batch_items if isinstance(batch_items, list) else [batch_items]:
+            for item in (batch_items if isinstance(batch_items, list) else [batch_items]):
                 if isinstance(item, (list, tuple)) and len(item) == 2:
                     g, labels = item
                 else:
@@ -136,8 +124,6 @@ def train(
                 all_labels.extend(labels.cpu().tolist())
 
         train_f1 = compute_f1(all_preds, all_labels, NUM_CLASSES)
-
-        # === Validation ===
         val_loss, val_f1 = evaluate(model, val_loader, criterion, device)
 
         if scheduler is not None:
@@ -154,7 +140,6 @@ def train(
                 f"({elapsed:.1f}s)"
             )
 
-        # Log and save best
         record = {
             "epoch": epoch,
             "train_loss": round(train_loss / max(len(train_loader), 1), 6),
@@ -194,7 +179,7 @@ def evaluate(model, loader, criterion, device):
     all_preds, all_labels = [], []
 
     for batch_items in loader:
-        for item in batch_items if isinstance(batch_items, list) else [batch_items]:
+        for item in (batch_items if isinstance(batch_items, list) else [batch_items]):
             if isinstance(item, (list, tuple)) and len(item) == 2:
                 g, labels = item
             else:
@@ -215,40 +200,27 @@ def evaluate(model, loader, criterion, device):
     return mean_loss, f1
 
 
-# ---------------------------------------------------------------------------
-# Model Building (with dynamic feat_dim)
-# ---------------------------------------------------------------------------
-
 def build_model(cfg: dict, feat_dim: int):
-    """Build the correct model based on type - fixed for stable CADHGT"""
     model_type = cfg["model"]["type"]
-    from models.hgt import CADHGT   # force fresh import
     if model_type == "hgt":
         logger.info(f"Building CADHGT (stable) with in_feats={feat_dim}")
         return CADHGT(
             in_feats=feat_dim,
-            hidden_dim=cfg["model"].get("hidden_dim", 256),
+            hidden_dim=cfg["model"].get("hidden_dim", 512),   # Increased default
             out_feats=NUM_CLASSES,
-            num_layers=cfg["model"].get("num_layers", 3),
+            num_layers=cfg["model"].get("num_layers", 4),     # Increased default
             dropout=cfg["model"].get("dropout", 0.2),
         )
     else:
-        # GraphSAGE fallback
         logger.info(f"Building GraphSAGE with in_feats={feat_dim}")
         return build_graphsage(cfg)
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def _parse_args():
     p = argparse.ArgumentParser(description="Train GNN on MFCAD++ dataset")
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--model_type", default=None, choices=["hgt", "graphsage"])
     p.add_argument("--epochs", type=int, default=None)
-    p.add_argument("--batch_size", type=int, default=None)
-    p.add_argument("--lr", type=float, default=None)
     p.add_argument("--max_samples", type=int, default=None)
     return p.parse_args()
 
@@ -260,31 +232,35 @@ def main():
     with open(args.config) as fh:
         cfg = yaml.safe_load(fh)
 
-    # CLI overrides
     if args.model_type:
         cfg["model"]["type"] = args.model_type
     if args.epochs:
         cfg["training"]["epochs"] = args.epochs
-    if args.batch_size:
-        cfg["training"]["batch_size"] = args.batch_size
-    if args.lr:
-        cfg["training"]["learning_rate"] = args.lr
+    if args.max_samples is not None:
+        # max_samples is handled in dataloader
+        pass
 
     model_type = cfg["model"]["type"]
     set_seed(cfg["training"]["seed"])
 
     logger.remove()
-    logger.add(sys.stderr, level=cfg["logging"]["level"], colorize=cfg["logging"].get("colorize", True))
+    logger.add(sys.stderr, level=cfg["logging"]["level"], colorize=True)
 
-    # Data loaders
-    bs = cfg["training"]["batch_size"]
+    bs = cfg["training"].get("batch_size", 4)
+
     train_loader = make_dataloader(
-        cfg["paths"]["train_h5"], batch_size=bs, shuffle=True,
-        normalise=cfg["graph"]["normalise_features"], max_samples=args.max_samples
+        cfg["paths"]["train_h5"],
+        batch_size=bs,
+        shuffle=True,
+        normalise=cfg["graph"]["normalise_features"],
+        max_samples=args.max_samples,
     )
     val_loader = make_dataloader(
-        cfg["paths"]["val_h5"], batch_size=bs, shuffle=False,
-        normalise=cfg["graph"]["normalise_features"], max_samples=args.max_samples
+        cfg["paths"]["val_h5"],
+        batch_size=bs,
+        shuffle=False,
+        normalise=cfg["graph"]["normalise_features"],
+        max_samples=args.max_samples,
     )
 
     # Get actual feature dimension
@@ -293,10 +269,8 @@ def main():
     feat_dim = temp_ds.feat_dim
     del temp_ds
 
-    # Build model with correct input size
     model = build_model(cfg, feat_dim=feat_dim)
 
-    # Train
     train(model, train_loader, val_loader, cfg, model_type)
 
 

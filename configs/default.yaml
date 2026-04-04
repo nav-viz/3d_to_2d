@@ -45,7 +45,7 @@ graph:
 model:
   type: "hgt"            # "hgt" | "graphsage"
   in_feats: 10           # must match graph.face_feat_dim
-  hidden_dim: 256
+  hidden_dim: 512
   out_feats: 25          # number of machining-feature classes (MFCAD++)
   num_layers: 3
   num_heads: 4           # HGT only

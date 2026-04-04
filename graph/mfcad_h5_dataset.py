@@ -28,6 +28,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 NUM_CLASSES = 25
+FACE_FEAT_DIM = 10
 
 
 # ---------------------------------------------------------------------------
@@ -202,14 +203,21 @@ class MFCAD_H5_Dataset(Dataset):
 # DataLoader factory
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# DataLoader factory
+# ---------------------------------------------------------------------------
+
 def make_dataloader(
     h5_path: Union[str, Path],
-    batch_size: int = 1,          # Default to 1 for safety with variable sizes
+    batch_size: int = 4,          # Changed default to 4 (safe now)
     shuffle: bool = True,
     normalise: bool = True,
     num_workers: int = 0,
     max_samples: Optional[int] = None,
 ) -> "torch.utils.data.DataLoader":
+    """
+    Returns DataLoader that properly handles variable-sized graphs.
+    """
     ds = MFCAD_H5_Dataset(
         h5_path, normalise=normalise, max_samples=max_samples
     )
@@ -222,9 +230,15 @@ def make_dataloader(
             shuffle=shuffle,
             num_workers=num_workers,
             drop_last=False,
-            collate_fn=lambda x: x,   # Return list of samples → manual handling
+            collate_fn=lambda x: x,   # Critical: manual batch handling
         )
     else:
         from torch.utils.data import DataLoader
-        return DataLoader(ds, batch_size=batch_size, shuffle=shuffle, 
-                          num_workers=num_workers, collate_fn=lambda x: x)
+        return DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            drop_last=False,
+            collate_fn=lambda x: x,
+        )
