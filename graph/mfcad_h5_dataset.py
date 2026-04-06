@@ -28,7 +28,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 NUM_CLASSES = 25
-FACE_FEAT_DIM = 10
+FACE_FEAT_DIM = 13
 
 
 # ---------------------------------------------------------------------------
@@ -203,20 +203,18 @@ class MFCAD_H5_Dataset(Dataset):
 # DataLoader factory
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# DataLoader factory
-# ---------------------------------------------------------------------------
+# graph/mfcad_h5_dataset.py  —  REPLACE the make_dataloader function
 
 def make_dataloader(
     h5_path: Union[str, Path],
-    batch_size: int = 4,          # Changed default to 4 (safe now)
+    batch_size: int = 4,
     shuffle: bool = True,
     normalise: bool = True,
     num_workers: int = 0,
     max_samples: Optional[int] = None,
 ) -> "torch.utils.data.DataLoader":
     """
-    Returns DataLoader that properly handles variable-sized graphs.
+    Returns DataLoader with proper graph + label batching for DGL.
     """
     ds = MFCAD_H5_Dataset(
         h5_path, normalise=normalise, max_samples=max_samples
@@ -224,13 +222,20 @@ def make_dataloader(
 
     if _DGL_AVAILABLE:
         from dgl.dataloading import GraphDataLoader
+
+        def collate_fn(samples):
+            graphs, labels = map(list, zip(*samples))
+            batched_graph = dgl.batch(graphs)
+            batched_labels = torch.cat(labels, dim=0)
+            return batched_graph, batched_labels
+
         return GraphDataLoader(
             ds,
             batch_size=batch_size,
             shuffle=shuffle,
             num_workers=num_workers,
             drop_last=False,
-            collate_fn=lambda x: x,   # Critical: manual batch handling
+            collate_fn=collate_fn,        # ← Proper collate!
         )
     else:
         from torch.utils.data import DataLoader

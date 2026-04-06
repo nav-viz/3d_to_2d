@@ -38,32 +38,45 @@ SURF_TYPE_ENC: dict[str, int] = {
     "Unknown":  7,
 }
 
-FACE_FEAT_DIM = 10
+FACE_FEAT_DIM = 13
 
 
 def extract_face_features(topology: dict[str, Any]) -> np.ndarray:
     """
-    Build an (N_faces, FACE_FEAT_DIM) feature matrix from a parsed topology.
-
-    Parameters
-    ----------
-    topology : dict
-        Output of ``cad.parser.load_step``.
-
-    Returns
-    -------
-    np.ndarray, shape (N, 10), dtype float32
+    Enhanced: original 10 features + 3 convexity neighbor ratios (total 13 dims).
     """
     faces = topology.get("faces", [])
+    edges = topology.get("edges", [])
     N = len(faces)
     if N == 0:
-        return np.zeros((0, FACE_FEAT_DIM), dtype=np.float32)
+        return np.zeros((0, 13), dtype=np.float32)
 
-    feat = np.zeros((N, FACE_FEAT_DIM), dtype=np.float32)
+    # Build per-face convexity counts
+    adj_convex = [0] * N
+    adj_concave = [0] * N
+    adj_smooth = [0] * N
+
+    for edge in edges:
+        fids = edge.get("face_ids", [])
+        conv = str(edge.get("convexity", "unknown")).lower()
+        if len(fids) == 2:
+            fa, fb = fids
+            if conv == "convex":
+                adj_convex[fa] += 1
+                adj_convex[fb] += 1
+            elif conv == "concave":
+                adj_concave[fa] += 1
+                adj_concave[fb] += 1
+            elif conv == "smooth":
+                adj_smooth[fa] += 1
+                adj_smooth[fb] += 1
+
+    feat = np.zeros((N, 13), dtype=np.float32)
     all_areas = np.array([f.get("area", 1.0) for f in faces], dtype=np.float32)
     area_max = all_areas.max() + 1e-8
 
     for i, face in enumerate(faces):
+        # Original 10 features (indices 0-8)
         feat[i, 0] = float(SURF_TYPE_ENC.get(
             face.get("surface_type", "Unknown"), 7
         ))
@@ -76,9 +89,15 @@ def extract_face_features(topology: dict[str, Any]) -> np.ndarray:
             normal = _get_face_normal(occ_face)
             feat[i, 5:8] = normal
             feat[i, 8] = _get_perimeter(occ_face) / (area_max ** 0.5 + 1e-8)
-        # feat[i, 9] – is_outer_shell: requires shell classification (TODO)
 
-    logger.debug(f"Extracted feature matrix: {feat.shape}")
+        # New features (9,10,11,12)
+        total_nbr = adj_convex[i] + adj_concave[i] + adj_smooth[i] + 1e-8
+        feat[i, 9]  = adj_convex[i] / total_nbr
+        feat[i, 10] = adj_concave[i] / total_nbr
+        feat[i, 11] = adj_smooth[i] / total_nbr
+        feat[i, 12] = min(total_nbr / 30.0, 1.0)   # normalized degree
+
+    logger.debug(f"Extracted enhanced feature matrix: {feat.shape} (13 dims)")
     return feat
 
 

@@ -19,6 +19,8 @@ import torch.nn as nn
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
 from loguru import logger
 
+import torch.nn.functional as F
+
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -33,7 +35,22 @@ try:
 except ImportError:
     _SKLEARN = False
 
+class FocalLoss(nn.Module):
+    """Focal Loss for better handling of class imbalance in multi-class setting."""
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
 
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        ce_loss = F.cross_entropy(logits, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        return focal_loss.sum()
+    
 def set_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -58,6 +75,8 @@ def _make_scheduler(optimiser, cfg, num_epochs):
     return None
 
 
+# training/train.py  —  REPLACE train() and evaluate()
+
 def train(
     model: nn.Module,
     train_loader,
@@ -65,73 +84,67 @@ def train(
     cfg: dict,
     model_type: str,
 ) -> None:
+    """Stable training with Focal Loss."""
     tc = cfg["training"]
-    lr = tc["learning_rate"]
-    wd = tc["weight_decay"]
-    epochs = tc["epochs"]
-    patience = tc["patience"]
-    log_every = tc["log_every"]
+    lr = float(tc.get("learning_rate", 0.0005))
+    wd = float(tc.get("weight_decay", 1e-4))
+    epochs = int(tc.get("epochs", 150))
+    patience = int(tc.get("patience", 20))
+    log_every = int(tc.get("log_every", 5))
 
     ckpt_dir = Path(cfg["paths"]["checkpoints"])
-    log_dir = Path(cfg["paths"]["logs"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    log_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = ckpt_dir / f"best_{model_type}.pt"
 
-    device = torch.device("cpu")
-    logger.info(f"Training on device: {device}")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
-    optimiser = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)
-    scheduler = _make_scheduler(optimiser, cfg, epochs)
-    criterion = nn.CrossEntropyLoss()
+    criterion = FocalLoss(alpha=0.25, gamma=2.0)
+
+    optimiser = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=epochs, eta_min=1e-6)
 
     best_val_f1 = -1.0
     no_improve = 0
-    log_path = log_dir / f"train_{model_type}.jsonl"
-    ckpt_path = ckpt_dir / f"best_{model_type}.pt"
+    min_epochs = 10
 
     for epoch in range(1, epochs + 1):
         t0 = time.time()
+
         model.train()
         train_loss = 0.0
         all_preds, all_labels = [], []
 
-        for batch_items in train_loader:
-            for item in (batch_items if isinstance(batch_items, list) else [batch_items]):
-                if isinstance(item, (list, tuple)) and len(item) == 2:
-                    g, labels = item
-                else:
-                    continue
+        for batch in train_loader:
+            if isinstance(batch, (list, tuple)) and len(batch) == 2:
+                g, labels = batch
+            else:
+                continue
 
-                import dgl
-                if not isinstance(g, dgl.DGLHeteroGraph):
-                    continue
+            g = g.to(device)
+            labels = labels.to(device).view(-1)
 
-                g = g.to(device)
-                labels = labels.to(device).view(-1)
+            logits = model(g)
+            loss = criterion(logits, labels)
 
-                logits = model(g)
-                loss = criterion(logits, labels)
+            optimiser.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimiser.step()
 
-                optimiser.zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimiser.step()
-
-                train_loss += loss.item()
-                preds = logits.argmax(dim=-1).cpu().tolist()
-                all_preds.extend(preds)
-                all_labels.extend(labels.cpu().tolist())
+            train_loss += loss.item()
+            preds = logits.argmax(dim=-1).cpu().tolist()
+            all_preds.extend(preds)
+            all_labels.extend(labels.cpu().tolist())
 
         train_f1 = compute_f1(all_preds, all_labels, NUM_CLASSES)
-        val_loss, val_f1 = evaluate(model, val_loader, criterion, device)
 
-        if scheduler is not None:
-            scheduler.step()
+        val_loss, val_f1 = evaluate(model, val_loader, criterion, device)
+        scheduler.step()
 
         elapsed = time.time() - t0
 
-        if epoch % log_every == 0 or epoch == 1:
+        if epoch % log_every == 0 or val_f1 > best_val_f1:
             logger.info(
                 f"Epoch {epoch:>4}/{epochs}  "
                 f"train_loss={train_loss / max(len(train_loader), 1):.4f}  "
@@ -140,60 +153,54 @@ def train(
                 f"({elapsed:.1f}s)"
             )
 
-        record = {
-            "epoch": epoch,
-            "train_loss": round(train_loss / max(len(train_loader), 1), 6),
-            "train_f1": round(train_f1, 6),
-            "val_loss": round(val_loss, 6),
-            "val_f1": round(val_f1, 6),
-        }
-        with open(log_path, "a") as fh:
-            fh.write(json.dumps(record) + "\n")
-
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
             no_improve = 0
             torch.save({
                 "epoch": epoch,
                 "model_state": model.state_dict(),
-                "optimiser_state": optimiser.state_dict(),
                 "val_f1": val_f1,
                 "model_type": model_type,
                 "cfg": cfg,
             }, ckpt_path)
-            logger.success(f"Checkpoint saved → {ckpt_path} (val_f1={val_f1:.4f})")
+            logger.success(f"✓ Best checkpoint saved (val_f1={val_f1:.4f})")
         else:
             no_improve += 1
-            if no_improve >= patience:
+            if epoch >= min_epochs and no_improve >= patience:
                 logger.warning(f"Early stopping at epoch {epoch}")
                 break
 
-    logger.success(f"Training complete. Best val_f1={best_val_f1:.4f}")
+    logger.success(f"Training complete. Best val_f1 = {best_val_f1:.4f}")
 
 
 @torch.no_grad()
-def evaluate(model, loader, criterion, device):
+def evaluate(
+    model: nn.Module,
+    loader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> tuple[float, float]:
+    """Clean evaluation with proper batch unpacking."""
     model.eval()
-    import dgl
     total_loss = 0.0
     all_preds, all_labels = [], []
 
-    for batch_items in loader:
-        for item in (batch_items if isinstance(batch_items, list) else [batch_items]):
-            if isinstance(item, (list, tuple)) and len(item) == 2:
-                g, labels = item
-            else:
-                continue
-            if not isinstance(g, dgl.DGLHeteroGraph):
-                continue
+    for batch in loader:
+        if isinstance(batch, (list, tuple)) and len(batch) == 2:
+            g, labels = batch
+        else:
+            logger.warning(f"Unexpected val batch format: {type(batch)}")
+            continue
 
-            g = g.to(device)
-            labels = labels.to(device).view(-1)
-            logits = model(g)
-            loss = criterion(logits, labels)
-            total_loss += loss.item()
-            all_preds.extend(logits.argmax(dim=-1).cpu().tolist())
-            all_labels.extend(labels.cpu().tolist())
+        g = g.to(device)
+        labels = labels.to(device).view(-1)
+
+        logits = model(g)
+        loss = criterion(logits, labels)
+
+        total_loss += loss.item()
+        all_preds.extend(logits.argmax(dim=-1).cpu().tolist())
+        all_labels.extend(labels.cpu().tolist())
 
     mean_loss = total_loss / max(len(loader), 1)
     f1 = compute_f1(all_preds, all_labels, NUM_CLASSES)
@@ -232,13 +239,23 @@ def main():
     with open(args.config) as fh:
         cfg = yaml.safe_load(fh)
 
+    # === FIX: Force correct types ===
     if args.model_type:
         cfg["model"]["type"] = args.model_type
+
     if args.epochs:
-        cfg["training"]["epochs"] = args.epochs
+        cfg["training"]["epochs"] = int(args.epochs)
+
     if args.max_samples is not None:
-        # max_samples is handled in dataloader
-        pass
+        pass  # already handled in dataloader
+
+    # Ensure numeric types
+    tc = cfg["training"]
+    tc["learning_rate"] = float(tc.get("learning_rate", 0.001))
+    tc["weight_decay"]  = float(tc.get("weight_decay", 1e-5))
+    tc["epochs"]        = int(tc.get("epochs", 50))
+    tc["patience"]      = int(tc.get("patience", 12))
+    tc["batch_size"]    = int(tc.get("batch_size", 4))
 
     model_type = cfg["model"]["type"]
     set_seed(cfg["training"]["seed"])
@@ -246,7 +263,7 @@ def main():
     logger.remove()
     logger.add(sys.stderr, level=cfg["logging"]["level"], colorize=True)
 
-    bs = cfg["training"].get("batch_size", 4)
+    bs = cfg["training"]["batch_size"]
 
     train_loader = make_dataloader(
         cfg["paths"]["train_h5"],

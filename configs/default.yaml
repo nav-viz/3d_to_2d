@@ -34,7 +34,7 @@ neo4j:
 # ---------------------------------------------------------------------------
 graph:
   # Node feature dimensionality in the H5 files (V_1 = face features)
-  face_feat_dim: 10       # extend here when using V_2 vertex features
+  face_feat_dim: 13       # extend here when using V_2 vertex features
   edge_feat_dim: 0        # set > 0 when edge features are available
   # Normalise face features before feeding to GNN
   normalise_features: true
@@ -44,12 +44,12 @@ graph:
 # ---------------------------------------------------------------------------
 model:
   type: "hgt"            # "hgt" | "graphsage"
-  in_feats: 10           # must match graph.face_feat_dim
-  hidden_dim: 512
+  in_feats: 13           # must match graph.face_feat_dim
+  hidden_dim: 768
   out_feats: 25          # number of machining-feature classes (MFCAD++)
-  num_layers: 3
+  num_layers: 8
   num_heads: 4           # HGT only
-  dropout: 0.2
+  dropout: 0.12
   use_norm: true
 
 # ---------------------------------------------------------------------------
@@ -57,14 +57,14 @@ model:
 # ---------------------------------------------------------------------------
 training:
   batch_size: 4          # ← Change from 1 to 4
-  epochs: 30
-  learning_rate: 0.001
-  patience: 10
-  weight_decay: 0.0005
+  epochs: 150
+  learning_rate: 0.0005
+  patience: 20
+  weight_decay: 0.00001
   scheduler: "cosine"    # "cosine" | "step" | "none"
   step_size: 30          # for StepLR
   gamma: 0.5             # for StepLR
-  patience: 15           # early-stopping patience
+  patience: 25           # early-stopping patience
   log_every: 5           # log every N epochs
   save_best: true
   seed: 42
