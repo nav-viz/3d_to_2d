@@ -140,35 +140,39 @@ def predict(
 # ---------------------------------------------------------------------------
 
 def _load_checkpoint(
-    ckpt_path: Path,
+    ckpt_path: str | Path,
     cfg: dict,
     model_type: str,
 ) -> dict:
-    """Load model + weights from a checkpoint file."""
-    if not Path(ckpt_path).exists():
-        raise FileNotFoundError(
-            f"Checkpoint not found: {ckpt_path}\n"
-            "Run training first: python -m training.train"
-        )
+    """Load trained checkpoint with correct feature dimension."""
+    ckpt_path = Path(ckpt_path)
+
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = torch.load(ckpt_path, map_location=device)
+    ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
 
-    # Override model type from checkpoint if available
-    saved_type = ckpt.get("model_type", model_type)
-    cfg["model"]["type"] = saved_type
+    # Extract saved feature dimension
+    saved_in_feats = ckpt.get("in_feats")
+    if saved_in_feats is None:
+        saved_in_feats = ckpt.get("cfg", {}).get("model", {}).get("in_feats", 5)
 
-    model = build_model(cfg)
+    logger.success(f"Checkpoint trained with in_feats = {saved_in_feats}")
+
+    # Build model with correct dimension
+    model = build_model(cfg, checkpoint_in_feats=saved_in_feats)
+
+    # Load weights
     model.load_state_dict(ckpt["model_state"])
     model = model.to(device)
     model.eval()
 
-    logger.info(
-        f"Loaded checkpoint: {ckpt_path}  "
-        f"(epoch={ckpt.get('epoch', '?')}, "
-        f"val_f1={ckpt.get('val_f1', '?'):.4f})"
+    logger.success(
+        f"Model loaded successfully from {ckpt_path} "
+        f"(epoch={ckpt.get('epoch', '?')}, val_f1={ckpt.get('val_f1', 0):.4f})"
     )
     return {"model": model, "ckpt": ckpt}
-
 
 def _class_id_to_name() -> dict[int, str]:
     """Return the MFCAD++ class id → name mapping."""

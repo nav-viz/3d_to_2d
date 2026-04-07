@@ -152,17 +152,15 @@ def _cylinder_radius(occ_face: Any) -> float:
 
 
 def _cylinder_depth(occ_face: Any) -> float:
-    """Estimate depth of a cylinder from its bounding box height."""
     if occ_face is None:
         return 0.0
     try:
         from OCC.Core.Bnd import Bnd_Box
-        from OCC.Core.BRepBndLib import brepbndlib_Add
+        from OCC.Core.BRepBndLib import brepbndlib
         box = Bnd_Box()
-        brepbndlib_Add(occ_face, box)
+        brepbndlib.Add(occ_face, box)   # modern static method
         xmin, ymin, zmin, xmax, ymax, zmax = box.Get()
-        # Depth ~ max axis-aligned span excluding diameter
         dims = sorted([xmax - xmin, ymax - ymin, zmax - zmin])
-        return dims[-1]   # longest axis ≈ depth for a cylinder
+        return dims[-1]
     except Exception:
         return 0.0

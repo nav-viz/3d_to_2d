@@ -25,7 +25,7 @@ class CADHGT(nn.Module):
 
     def __init__(
         self,
-        in_feats: int = 13,      # updated
+        in_feats: int = 5,      # updated
         hidden_dim: int = 640,
         out_feats: int = 25,
         num_layers: int = 8,

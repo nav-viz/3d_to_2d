@@ -176,36 +176,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── train ─────────────────────────────────────────────────────────────────
     p_train = sub.add_parser("train", help="Train GNN on MFCAD++ H5 files")
-    p_train.add_argument("--model_type", default=None,
-                         choices=["hgt", "graphsage"])
+    p_train.add_argument("--model_type", default=None, choices=["hgt", "graphsage"])
     p_train.add_argument("--epochs",      type=int, default=None)
-    p_train.add_argument("--max_samples", type=int, default=None,
-                         help="Limit dataset size (debug)")
-    p_train.add_argument("--batch_size", type=int, default=None)
+    p_train.add_argument("--max_samples", type=int, default=None)
+    p_train.add_argument("--batch_size",  type=int, default=None)
+
     # ── infer ─────────────────────────────────────────────────────────────────
     p_infer = sub.add_parser("infer", help="Run GNN inference on a STEP file")
     p_infer.add_argument("--step_file",   required=True)
-    p_infer.add_argument("--model_type",  default=None,
-                         choices=["hgt", "graphsage"])
+    p_infer.add_argument("--model_type",  default=None, choices=["hgt", "graphsage"])
     p_infer.add_argument("--checkpoint",  default=None)
     p_infer.add_argument("--output_json", default=None)
 
     # ── export ────────────────────────────────────────────────────────────────
     p_export = sub.add_parser("export", help="Full DXF export from STEP")
     p_export.add_argument("--step_file",  required=True)
-    p_export.add_argument("--model_type", default=None,
-                          choices=["hgt", "graphsage"])
+    p_export.add_argument("--model_type", default=None, choices=["hgt", "graphsage"])
     p_export.add_argument("--checkpoint", default=None)
-    p_export.add_argument("--output",     default=None,
-                          help="Output .dxf path (default: output/<name>.dxf)")
+    p_export.add_argument("--output",     default=None)
 
     # ── all ───────────────────────────────────────────────────────────────────
     p_all = sub.add_parser("all", help="Run ingest → infer → export")
-    p_all.add_argument("--step_file",  required=True)
-    p_all.add_argument("--model_type", default=None,
-                       choices=["hgt", "graphsage"])
-    p_all.add_argument("--checkpoint", default=None)
-    p_all.add_argument("--output",     default=None)
+    p_all.add_argument("--step_file",   required=True)
+    p_all.add_argument("--model_type",  default=None, choices=["hgt", "graphsage"])
+    p_all.add_argument("--checkpoint",  default=None)
+    p_all.add_argument("--output",      default=None)
+
+    # Add --config and --log_level to ALL subparsers (this fixes the bug)
+    for subparser in [p_ingest, p_train, p_infer, p_export, p_all]:
+        subparser.add_argument("--config", default="configs/default.yaml",
+                               help="Path to YAML config file")
+        subparser.add_argument("--log_level", default=None,
+                               choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
     return p
 
@@ -215,7 +217,7 @@ def main() -> None:
     args   = parser.parse_args()
 
     # ── Config ────────────────────────────────────────────────────────────────
-    config_path = getattr(args, "config", "configs/default.yaml")
+    config_path = args.config if hasattr(args, 'config') else "configs/default.yaml"
     with open(config_path) as fh:
         cfg = yaml.safe_load(fh)
 
@@ -322,7 +324,7 @@ def main() -> None:
             step_path=step_path,
             model_type=model_type,
             cfg=cfg,
-            checkpoint=getattr(args, "checkpoint", None),
+            checkpoint=getattr(args, "checkpoint", None),   # keep as is (can be str or None),
         )
         from inference.writeback import write_predictions_to_kg
         write_predictions_to_kg(model_id, preds, client, model_type)

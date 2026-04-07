@@ -34,7 +34,7 @@ neo4j:
 # ---------------------------------------------------------------------------
 graph:
   # Node feature dimensionality in the H5 files (V_1 = face features)
-  face_feat_dim: 13       # extend here when using V_2 vertex features
+  face_feat_dim: 5       # extend here when using V_2 vertex features
   edge_feat_dim: 0        # set > 0 when edge features are available
   # Normalise face features before feeding to GNN
   normalise_features: true
@@ -44,7 +44,7 @@ graph:
 # ---------------------------------------------------------------------------
 model:
   type: "hgt"            # "hgt" | "graphsage"
-  in_feats: 13           # must match graph.face_feat_dim
+  in_feats: 5         # must match graph.face_feat_dim
   hidden_dim: 768
   out_feats: 25          # number of machining-feature classes (MFCAD++)
   num_layers: 8

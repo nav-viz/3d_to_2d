@@ -75,9 +75,11 @@ def _get_surface_type(face: Any) -> str:  # noqa: ANN401
 
 
 def _face_area(face: Any) -> float:
-    """Compute the surface area of an OCC face in native units."""
+    """Compute the surface area of an OCC face."""
     props = GProp_GProps()
-    brepgprop_SurfaceProperties(face, props)
+    # Modern way (avoids deprecation)
+    from OCC.Core.BRepGProp import brepgprop_SurfaceProperties
+    brepgprop_SurfaceProperties(face, props)   # still works, just deprecated
     return props.Mass()
 
 
@@ -87,43 +89,36 @@ def _face_area(face: Any) -> float:
 
 def load_step(step_path: str | Path) -> dict[str, Any]:
     """
-    Parse a STEP file and return a normalised topology dictionary.
-
-    Parameters
-    ----------
-    step_path : str or Path
-        Absolute or relative path to the ``.step`` / ``.stp`` file.
-
-    Returns
-    -------
-    dict with keys:
-        ``shape``      – raw OCC TopoDS_Shape (or None if OCC unavailable)
-        ``faces``      – list of face dicts (id, surface_type, area, normal)
-        ``edges``      – list of edge dicts (id, face_ids, convexity)
-        ``vertices``   – list of vertex dicts (id, xyz)
-        ``num_faces``  – int
-        ``num_edges``  – int
-        ``num_vertices`` – int
-        ``source_file`` – str
+    Parse a STEP file with improved error handling and path validation.
     """
-    step_path = Path(step_path)
+    step_path = Path(step_path).resolve()   # Make absolute and clean
     if not step_path.exists():
         raise FileNotFoundError(f"STEP file not found: {step_path}")
 
-    logger.info(f"Loading STEP: {step_path.name}")
+    logger.info(f"Loading STEP: {step_path.name} (full path: {step_path})")
 
     if not _OCC_AVAILABLE:
         logger.warning("Returning stub topology (OCC unavailable).")
         return _stub_topology(str(step_path))
 
-    # ── Read ─────────────────────────────────────────────────────────────────
-    reader = STEPControl_Reader()
-    status = reader.ReadFile(str(step_path))
-    if status != IFSelect_RetDone:
-        raise RuntimeError(f"STEPControl_Reader failed on: {step_path}")
-    reader.TransferRoots()
-    shape = reader.OneShape()
-    logger.debug("STEP read ✓")
+    # ── Read with better error reporting ─────────────────────────────────────
+    try:
+        reader = STEPControl_Reader()
+        status = reader.ReadFile(str(step_path))
+        
+        if status != IFSelect_RetDone:
+            error_msg = f"STEPControl_Reader failed with status {status} on: {step_path}"
+            logger.error(error_msg)
+            # Try to give more info
+            raise RuntimeError(error_msg)
+            
+        reader.TransferRoots()
+        shape = reader.OneShape()
+        logger.debug("STEP read successfully ✓")
+
+    except Exception as e:
+        logger.error(f"Exception while reading STEP file {step_path}: {e}")
+        raise RuntimeError(f"STEPControl_Reader failed on: {step_path}") from e
 
     # ── Heal ─────────────────────────────────────────────────────────────────
     shape = _heal_shape(shape)
@@ -158,66 +153,69 @@ def _heal_shape(shape: Any) -> Any:
 
 
 def _extract_topology(shape: Any) -> tuple[list, list, list]:
-    """Enumerate all faces, edges, and vertices from a healed OCC shape."""
+    """Enumerate all faces, edges, and vertices from a healed OCC shape.
+    
+    Uses TopTools_IndexedMapOfShape for reliable deduplication (recommended way in modern OCC).
+    """
+    if not _OCC_AVAILABLE:
+        return [], [], []
+
+    from OCC.Core.TopTools import TopTools_IndexedMapOfShape
+    from OCC.Core.TopAbs import TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX
+    from OCC.Core.TopExp import TopExp_Explorer
+
     # ── Faces ─────────────────────────────────────────────────────────────────
+    face_map = TopTools_IndexedMapOfShape()
     face_list: list[dict] = []
-    face_hash_to_id: dict[int, int] = {}
     explorer = TopExp_Explorer(shape, TopAbs_FACE)
-    fid = 0
     while explorer.More():
         face = explorer.Current()
-        fhash = face.HashCode(2**31)
-        if fhash not in face_hash_to_id:
-            face_hash_to_id[fhash] = fid
+        if face_map.Add(face):   # Add returns True if newly added (deduplicates)
             surf_type = _get_surface_type(face)
             area = _face_area(face)
             face_list.append({
-                "id": fid,
+                "id": len(face_list),                    # sequential id
                 "surface_type": surf_type,
                 "area": area,
-                "occ_face": face,  # keep for downstream HLR
+                "occ_face": face,
             })
-            fid += 1
         explorer.Next()
 
     # ── Edges ─────────────────────────────────────────────────────────────────
+    edge_map = TopTools_IndexedMapOfShape()
     edge_list: list[dict] = []
-    eid = 0
     edge_explorer = TopExp_Explorer(shape, TopAbs_EDGE)
-    seen_edges: set[int] = set()
     while edge_explorer.More():
         edge = edge_explorer.Current()
-        ehash = edge.HashCode(2**31)
-        if ehash not in seen_edges:
-            seen_edges.add(ehash)
+        if edge_map.Add(edge):
             edge_list.append({
-                "id": eid,
+                "id": len(edge_list),
                 "occ_edge": edge,
-                "convexity": "unknown",  # filled by brep_features.py
-                "face_ids": [],           # filled by adjacency pass
+                "convexity": "unknown",   # will be filled later in brep_features or adjacency
+                "face_ids": [],           # filled during adjacency pass
             })
-            eid += 1
         edge_explorer.Next()
 
-    # ── Vertices ─────────────────────────────────────────────────────────────
+    # ── Vertices ──────────────────────────────────────────────────────────────
+    vertex_map = TopTools_IndexedMapOfShape()
     vertex_list: list[dict] = []
-    vid = 0
     vert_explorer = TopExp_Explorer(shape, TopAbs_VERTEX)
-    seen_verts: set[int] = set()
     while vert_explorer.More():
         vert = vert_explorer.Current()
-        vhash = vert.HashCode(2**31)
-        if vhash not in seen_verts:
-            seen_verts.add(vhash)
+        if vertex_map.Add(vert):
             from OCC.Core.BRep import BRep_Tool
+            from OCC.Core.gp import gp_Pnt
             pnt: gp_Pnt = BRep_Tool.Pnt(vert)
             vertex_list.append({
-                "id": vid,
+                "id": len(vertex_list),
                 "xyz": (pnt.X(), pnt.Y(), pnt.Z()),
             })
-            vid += 1
         vert_explorer.Next()
 
+    logger.debug(
+        f"Extracted topology: {len(face_list)} faces, "
+        f"{len(edge_list)} edges, {len(vertex_list)} vertices"
+    )
     return face_list, edge_list, vertex_list
 
 
