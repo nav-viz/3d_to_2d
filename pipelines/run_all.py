@@ -286,9 +286,11 @@ def main() -> None:
         write_predictions_to_kg(model_id, preds, client, model_type)
 
         if getattr(args, "output_json", None):
-            with open(args.output_json, "w") as fh:
+            output_json = Path(args.output_json)
+            output_json.parent.mkdir(parents=True, exist_ok=True)   # ← ADD THIS LINE
+            with open(output_json, "w") as fh:
                 json.dump(preds, fh, indent=2)
-            logger.info(f"Predictions → {args.output_json}")
+            logger.success(f"Predictions saved → {output_json}")
 
     # ─────────────────────────────────────────────────────────────────────────
     elif stage == "export":

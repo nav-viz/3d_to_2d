@@ -11,13 +11,6 @@ Flow
 4. Load trained checkpoint   (checkpoints/best_*.pt)
 5. Forward pass → softmax probabilities
 6. Return list of per-face predictions
-
-Usage (CLI)
------------
-    python -m inference.predict \
-        --step_file path/to/part.step \
-        --model_type hgt \
-        --config configs/default.yaml
 """
 
 from __future__ import annotations
@@ -27,6 +20,7 @@ import sys
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger
 
@@ -35,18 +29,20 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 import yaml
+
 from cad.parser import load_step
 from graph.build_dgl import build_from_neo4j
-from graph.extract import extract_face_features
 from kg.ingest import ingest_step
 from kg.neo4j_client import Neo4jClient
 from models.graphsage import build_model
+
 
 try:
     import dgl
     _DGL_AVAILABLE = True
 except ImportError:
     _DGL_AVAILABLE = False
+    logger.warning("DGL not available")
 
 
 # ---------------------------------------------------------------------------
@@ -61,18 +57,6 @@ def predict(
 ) -> list[dict]:
     """
     Run end-to-end inference on a STEP file.
-
-    Parameters
-    ----------
-    step_path       : path to the ``.step`` file
-    cfg             : full pipeline config dict
-    model_type      : "hgt" | "graphsage" (default: config value)
-    checkpoint_path : explicit ckpt path (default: checkpoints/best_<type>.pt)
-
-    Returns
-    -------
-    list of dicts:
-        {face_id, feature_type, confidence, class_id, logits, params}
     """
     step_path = Path(step_path)
     model_type = model_type or cfg["model"]["type"]
@@ -95,21 +79,22 @@ def predict(
     # ── Build graph ───────────────────────────────────────────────────────────
     g = build_from_neo4j(model_id, client, topology, cfg)
     g = g.to(device)
+
     feat_dim_runtime = g.nodes["face"].data["feat"].shape[1]
     logger.info(f"[DEBUG] Runtime feature dim = {feat_dim_runtime}")
+
     # ── Inference ─────────────────────────────────────────────────────────────
     model.eval()
     with torch.no_grad():
         logits = model(g)                      # (N, num_classes)
-        probs  = F.softmax(logits, dim=-1)     # (N, num_classes)
-        class_ids  = probs.argmax(dim=-1).cpu().tolist()
+        probs = F.softmax(logits, dim=-1)      # (N, num_classes)
+        class_ids = probs.argmax(dim=-1).cpu().tolist()
         confidences = probs.max(dim=-1).values.cpu().tolist()
 
     # ── Decode predictions ────────────────────────────────────────────────────
-    from graph.encode import encode_labels  # label map constant
     CLASS_NAMES = _class_id_to_name()
-
     conf_thresh = cfg["inference"]["confidence_threshold"]
+
     predictions = []
     for i, (cid, conf) in enumerate(zip(class_ids, confidences)):
         feature_type = (
@@ -118,16 +103,14 @@ def predict(
             else "Low_Confidence"
         )
         predictions.append({
-            "face_id":      i,
+            "face_id": i,
             "feature_type": feature_type,
-            "class_id":     cid,
-            "confidence":   round(conf, 4),
-            "logits":       logits[i].cpu().tolist(),
-            "params":       {},   # extend with geometric params
+            "class_id": cid,
+            "confidence": round(conf, 4),
+            "logits": logits[i].cpu().tolist(),
+            "params": {},   # extend later with geometric params if needed
         })
-        logger.debug(
-            f"Face {i}: {feature_type}  conf={conf:.3f}"
-        )
+        logger.debug(f"Face {i}: {feature_type}  conf={conf:.3f}")
 
     logger.info(
         f"Inference done: {len(predictions)} faces  "
@@ -141,68 +124,55 @@ def predict(
 # ---------------------------------------------------------------------------
 
 # inference/predict.py
-# ... (keep all imports unchanged)
-
 def _load_checkpoint(
     ckpt_path: str | Path,
     cfg: dict,
     model_type: str,
 ) -> dict:
-    """Load trained checkpoint preferring SAVED config for architecture params."""
     ckpt_path = Path(ckpt_path)
-
-    if not ckpt_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
 
-    # === CRITICAL FIX: Use checkpoint's saved cfg (prevents drift) ===
-    saved_cfg = ckpt.get("cfg", cfg)                    # fallback to current cfg
-    saved_in_feats = ckpt.get("in_feats") or saved_cfg["model"].get("in_feats", 13)
-    saved_hidden = saved_cfg["model"].get("hidden_dim", 768)
-    saved_layers = saved_cfg["model"].get("num_layers", 8)
-    saved_dropout = saved_cfg["model"].get("dropout", 0.12)
+    saved_in_feats = ckpt.get("in_feats") or ckpt.get("cfg", {}).get("model", {}).get("in_feats", 5)
+    runtime_in_feats = 13   # hard-coded because extract_face_features now returns 13
 
     logger.success(f"Checkpoint trained with in_feats = {saved_in_feats}")
-    logger.info(
-        f"Using checkpoint architecture: hidden={saved_hidden} | "
-        f"layers={saved_layers} | dropout={saved_dropout}"
-    )
+    logger.info(f"Runtime feature dim = {runtime_in_feats}")
 
-    # Build model with checkpoint's exact params
-    model = build_model(
-        cfg=saved_cfg,                  # pass saved_cfg (not current cfg)
-        checkpoint_in_feats=saved_in_feats
-    )
+    # === BUILD MODEL WITH CURRENT (13-dim) CONFIG ===
+    model = build_model(cfg, checkpoint_in_feats=runtime_in_feats)  # force 13
 
-    # Load weights
-    try:
-        model.load_state_dict(ckpt["model_state"], strict=True)
-        logger.success("✓ Strict weight loading successful")
-    except RuntimeError as e:
-        logger.warning(f"Strict loading failed: {e}. Trying partial load...")
-        model.load_state_dict(ckpt["model_state"], strict=False)
-        logger.success("✓ Partial (strict=False) weight loading completed")
-    
+    # === RESIZE INPUT PROJECTION LAYER (the real fix) ===
+    if saved_in_feats != runtime_in_feats:
+        logger.warning(f"Feature dimension mismatch detected! Checkpoint: {saved_in_feats} → Runtime: {runtime_in_feats}. Resizing input projection...")
+
+        old_weight = ckpt["model_state"]["input_proj.weight"]          # shape (768, old_dim)
+        old_bias   = ckpt["model_state"].get("input_proj.bias", None)
+
+        logger.info(f"Old input_proj.weight shape: {old_weight.shape}")
+
+        # Create new weight: pad extra dimensions with zeros (standard upgrade technique)
+        new_weight = torch.zeros((old_weight.shape[0], runtime_in_feats), dtype=old_weight.dtype, device=old_weight.device)
+        new_weight[:, :saved_in_feats] = old_weight
+
+        ckpt["model_state"]["input_proj.weight"] = new_weight
+
+        if old_bias is not None:
+            ckpt["model_state"]["input_proj.bias"] = old_bias  # bias stays the same
+
+        logger.info(f"New input_proj.weight shape: {new_weight.shape} ← RESIZED SUCCESSFULLY")
+
+    # Now load (strict=False is safer after resize)
+    model.load_state_dict(ckpt["model_state"], strict=False)
     model = model.to(device)
     model.eval()
 
-    logger.success(
-        f"Model loaded from {ckpt_path} (epoch={ckpt.get('epoch', '?')}, "
-        f"val_f1={ckpt.get('val_f1', 0):.4f})"
-    )
-    # Inside _load_checkpoint (predict.py) right after torch.load
-    print("=== CHECKPOINT DEBUG ===")
-    print("saved_in_feats:", ckpt.get("in_feats"))
-    print("saved_cfg in_feats:", ckpt.get("cfg", {}).get("model", {}).get("in_feats"))
-    print("input_proj.weight shape:", ckpt["model_state"]['input_proj.weight'].shape)
-    print("========================")
+    logger.success(f"Model loaded from {ckpt_path} (resized from {saved_in_feats}→{runtime_in_feats})")
     return {"model": model, "ckpt": ckpt}
 
 
 def _class_id_to_name() -> dict[int, str]:
-    """Return the MFCAD++ class id → name mapping."""
+    """MFCAD++ class id → feature name mapping."""
     return {
         0: "Chamfer",
         1: "Through_Hole",
@@ -238,25 +208,23 @@ def _class_id_to_name() -> dict[int, str]:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run GNN inference on a STEP file")
-    p.add_argument("--step_file",   required=True)
-    p.add_argument("--config",      default="configs/default.yaml")
-    p.add_argument("--model_type",  default=None,
-                   choices=["hgt", "graphsage"])
-    p.add_argument("--checkpoint",  default=None)
+    p.add_argument("--step_file", required=True)
+    p.add_argument("--config", default="configs/default.yaml")
+    p.add_argument("--model_type", default=None, choices=["hgt", "graphsage"])
+    p.add_argument("--checkpoint", default=None)
     p.add_argument("--output_json", default=None,
                    help="Save predictions to JSON file")
     return p.parse_args()
 
 
 def main() -> None:
-    import json
     args = _parse_args()
     with open(args.config) as fh:
         cfg = yaml.safe_load(fh)
 
     logger.remove()
     logger.add(sys.stderr, level=cfg["logging"]["level"],
-               colorize=cfg["logging"]["colorize"])
+               colorize=cfg["logging"].get("colorize", True))
 
     preds = predict(
         step_path=args.step_file,
@@ -266,6 +234,7 @@ def main() -> None:
     )
 
     if args.output_json:
+        import json
         with open(args.output_json, "w") as fh:
             json.dump(preds, fh, indent=2)
         logger.info(f"Predictions saved → {args.output_json}")

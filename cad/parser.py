@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 import yaml
 from loguru import logger
-
+from OCC.Core.BRepGProp import brepgprop
 # ---------------------------------------------------------------------------
 # Optional OCC import
 # ---------------------------------------------------------------------------
@@ -74,12 +74,13 @@ def _get_surface_type(face: Any) -> str:  # noqa: ANN401
     return SURF_TYPE_MAP.get(int(stype), "Other")
 
 
+# cad/parser.py - Replace the _face_area function
+
 def _face_area(face: Any) -> float:
-    """Compute the surface area of an OCC face."""
+    """Compute the surface area of an OCC face using the recommended static method."""
     props = GProp_GProps()
-    # Modern way (avoids deprecation)
-    from OCC.Core.BRepGProp import brepgprop_SurfaceProperties
-    brepgprop_SurfaceProperties(face, props)   # still works, just deprecated
+    # Updated: use static method instead of deprecated function
+    brepgprop.SurfaceProperties(face, props)
     return props.Mass()
 
 
