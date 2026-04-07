@@ -38,7 +38,7 @@ SURF_TYPE_ENC: dict[str, int] = {
     "Unknown":  7,
 }
 
-FACE_FEAT_DIM = 5
+FACE_FEAT_DIM = 13
 
 
 def extract_face_features(topology: dict[str, Any]) -> np.ndarray:

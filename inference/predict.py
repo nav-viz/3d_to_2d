@@ -95,7 +95,8 @@ def predict(
     # ── Build graph ───────────────────────────────────────────────────────────
     g = build_from_neo4j(model_id, client, topology, cfg)
     g = g.to(device)
-
+    feat_dim_runtime = g.nodes["face"].data["feat"].shape[1]
+    logger.info(f"[DEBUG] Runtime feature dim = {feat_dim_runtime}")
     # ── Inference ─────────────────────────────────────────────────────────────
     model.eval()
     with torch.no_grad():
@@ -139,12 +140,15 @@ def predict(
 # Helpers
 # ---------------------------------------------------------------------------
 
+# inference/predict.py
+# ... (keep all imports unchanged)
+
 def _load_checkpoint(
     ckpt_path: str | Path,
     cfg: dict,
     model_type: str,
 ) -> dict:
-    """Load trained checkpoint with correct feature dimension."""
+    """Load trained checkpoint preferring SAVED config for architecture params."""
     ckpt_path = Path(ckpt_path)
 
     if not ckpt_path.exists():
@@ -153,26 +157,49 @@ def _load_checkpoint(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
 
-    # Extract saved feature dimension
-    saved_in_feats = ckpt.get("in_feats")
-    if saved_in_feats is None:
-        saved_in_feats = ckpt.get("cfg", {}).get("model", {}).get("in_feats", 5)
+    # === CRITICAL FIX: Use checkpoint's saved cfg (prevents drift) ===
+    saved_cfg = ckpt.get("cfg", cfg)                    # fallback to current cfg
+    saved_in_feats = ckpt.get("in_feats") or saved_cfg["model"].get("in_feats", 13)
+    saved_hidden = saved_cfg["model"].get("hidden_dim", 768)
+    saved_layers = saved_cfg["model"].get("num_layers", 8)
+    saved_dropout = saved_cfg["model"].get("dropout", 0.12)
 
     logger.success(f"Checkpoint trained with in_feats = {saved_in_feats}")
+    logger.info(
+        f"Using checkpoint architecture: hidden={saved_hidden} | "
+        f"layers={saved_layers} | dropout={saved_dropout}"
+    )
 
-    # Build model with correct dimension
-    model = build_model(cfg, checkpoint_in_feats=saved_in_feats)
+    # Build model with checkpoint's exact params
+    model = build_model(
+        cfg=saved_cfg,                  # pass saved_cfg (not current cfg)
+        checkpoint_in_feats=saved_in_feats
+    )
 
     # Load weights
-    model.load_state_dict(ckpt["model_state"])
+    try:
+        model.load_state_dict(ckpt["model_state"], strict=True)
+        logger.success("✓ Strict weight loading successful")
+    except RuntimeError as e:
+        logger.warning(f"Strict loading failed: {e}. Trying partial load...")
+        model.load_state_dict(ckpt["model_state"], strict=False)
+        logger.success("✓ Partial (strict=False) weight loading completed")
+    
     model = model.to(device)
     model.eval()
 
     logger.success(
-        f"Model loaded successfully from {ckpt_path} "
-        f"(epoch={ckpt.get('epoch', '?')}, val_f1={ckpt.get('val_f1', 0):.4f})"
+        f"Model loaded from {ckpt_path} (epoch={ckpt.get('epoch', '?')}, "
+        f"val_f1={ckpt.get('val_f1', 0):.4f})"
     )
+    # Inside _load_checkpoint (predict.py) right after torch.load
+    print("=== CHECKPOINT DEBUG ===")
+    print("saved_in_feats:", ckpt.get("in_feats"))
+    print("saved_cfg in_feats:", ckpt.get("cfg", {}).get("model", {}).get("in_feats"))
+    print("input_proj.weight shape:", ckpt["model_state"]['input_proj.weight'].shape)
+    print("========================")
     return {"model": model, "ckpt": ckpt}
+
 
 def _class_id_to_name() -> dict[int, str]:
     """Return the MFCAD++ class id → name mapping."""

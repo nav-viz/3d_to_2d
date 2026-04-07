@@ -97,7 +97,7 @@ def build_from_neo4j(
     # ── Node features ─────────────────────────────────────────────────────────
     feat_mat = extract_face_features(topology)   # (N, 10)
     N = feat_mat.shape[0]
-
+    print(f"extract_face_features shape = {feat_mat.shape}")
     # ── Adjacency from Neo4j ──────────────────────────────────────────────────
     adjacency = _query_adjacency(model_id, client)
 

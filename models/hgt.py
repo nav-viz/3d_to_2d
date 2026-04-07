@@ -34,7 +34,11 @@ class CADHGT(nn.Module):
         super().__init__()
         if not _DGL_AVAILABLE:
             raise ImportError("DGL is required")
-
+        
+        logger.info(
+            f"CADHGT init: input_proj in={in_feats}→hidden={hidden_dim} | "
+            f"layers={num_layers} | classifier out={out_feats}"
+        )
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.dropout = dropout

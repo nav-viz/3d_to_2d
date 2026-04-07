@@ -162,6 +162,7 @@ def train(
                 "val_f1": val_f1,
                 "model_type": model_type,
                 "cfg": cfg,
+                "in_feats": model.input_proj.in_features, 
             }, ckpt_path)
             logger.success(f"✓ Best checkpoint saved (val_f1={val_f1:.4f})")
         else:
@@ -213,9 +214,9 @@ def build_model(cfg: dict, feat_dim: int):
         logger.info(f"Building CADHGT (stable) with in_feats={feat_dim}")
         return CADHGT(
             in_feats=feat_dim,
-            hidden_dim=cfg["model"].get("hidden_dim", 512),   # Increased default
+            hidden_dim=cfg["model"].get("hidden_dim", 768),   # Increased default
             out_feats=NUM_CLASSES,
-            num_layers=cfg["model"].get("num_layers", 4),     # Increased default
+            num_layers=cfg["model"].get("num_layers", 8),     # Increased default
             dropout=cfg["model"].get("dropout", 0.2),
         )
     else:

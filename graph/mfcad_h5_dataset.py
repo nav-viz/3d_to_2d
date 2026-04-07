@@ -71,6 +71,10 @@ class MFCAD_H5_Dataset(Dataset):
         with h5py.File(self.h5_path, "r") as fh:
             sample_key = self._keys[0]
             self.feat_dim = fh[sample_key]["V_1"].shape[1]
+            if self.feat_dim != FACE_FEAT_DIM:
+                logger.warning(
+                    f"Dataset feature dim ({self.feat_dim}) != expected ({FACE_FEAT_DIM})"
+                )
             logger.info(f"Detected face feature dimension: {self.feat_dim}")
 
         # Compute normalisation stats
