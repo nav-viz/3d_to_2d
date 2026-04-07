@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from typing import Any
-from loguru import logger
+from utils.logger import logger
 
 try:
     # Full HLR pipeline (requires pythonocc-core >= 7.7)
@@ -66,6 +66,25 @@ class ProjectionResult:
     scale: float = 1.0
 
 
+def _get_bounding_box(shape: Any, use_mesh: bool = True) -> tuple[float, float, float, float]:
+    """Compute axis-aligned OCC bounding box; returns stub extents if OCC unavailable."""
+    if shape is None:
+        return (0.0, 0.0, 0.0, 100.0, 100.0, 100.0)
+    try:
+        from OCC.Core.Bnd import Bnd_Box
+        from OCC.Core.BRepBndLib import brepbndlib_Add
+        from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
+
+        bbox = Bnd_Box()
+        if use_mesh:
+            mesh = BRepMesh_IncrementalMesh(shape, 0.1)  # deflection
+            mesh.Perform()
+        brepbndlib_Add(shape, bbox, use_mesh)
+        xmin, ymin, zmin, xmax, ymax, zmax = bbox.Get()
+        return (xmin, ymin, zmin, xmax, ymax, zmax)
+    except Exception:
+        # Fallback if box is void/infinite
+        return (0.0, 0.0, 0.0, 100.0, 80.0, 50.0)
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -103,49 +122,67 @@ def project_view(
 # OCC HLR implementation
 # ---------------------------------------------------------------------------
 
-def _project_occ(
-    shape: Any,
-    view_name: str,
-    direction: tuple[float, float, float],
-    scale: float,
-) -> ProjectionResult:
-    """Full OpenCASCADE HLR projection."""
-    dx, dy, dz = direction
-    norm = math.sqrt(dx*dx + dy*dy + dz*dz) + 1e-12
-    dx, dy, dz = dx/norm, dy/norm, dz/norm
+def _project_occ(shape, view_name: str, direction: tuple, scale: float = 1.0):
+    """Safe HLR projection for pythonocc-core 7.7+"""
+    from OCC.Core.HLRAlgo import HLRAlgo_Projector
+    from OCC.Core.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
+    from OCC.Core.gp import gp_Dir, gp_Ax2, gp_Pnt
 
-    proj_dir = gp_Dir(dx, dy, dz)
-    eye = gp_Pnt(dx * 1000, dy * 1000, dz * 1000)
-    projector = HLRAlgo_Projector(
-        gp_Ax2(eye, proj_dir), False, scale
-    )
+    # Define view direction and up vector
+    if view_name == "front":
+        dir_vec = gp_Dir(0, 0, -1)
+        up_vec = gp_Dir(0, 1, 0)
+    elif view_name == "top":
+        dir_vec = gp_Dir(0, -1, 0)
+        up_vec = gp_Dir(0, 0, 1)
+    elif view_name == "right":
+        dir_vec = gp_Dir(1, 0, 0)
+        up_vec = gp_Dir(0, 1, 0)
+    elif view_name == "bottom":
+        dir_vec = gp_Dir(0, 1, 0)
+        up_vec = gp_Dir(0, 0, -1)
+    elif view_name == "isometric":
+        dir_vec = gp_Dir(1, 1, 1).Normalized()
+        up_vec = gp_Dir(0, 0, 1)
+    else:  # default front
+        dir_vec = gp_Dir(0, 0, -1)
+        up_vec = gp_Dir(0, 1, 0)
 
-    algo = HLRBRep_Algo()
-    algo.Add(shape)
-    algo.Projector(projector)
-    algo.Update()
-    algo.Hide()
+    # Create coordinate system
+    ax2 = gp_Ax2(gp_Pnt(0, 0, 0), dir_vec, up_vec)
 
-    to_shape = HLRBRep_HLRToShape(algo)
+    # Safe projector creation (most compatible across versions)
+    try:
+        projector = HLRAlgo_Projector(ax2)                    # Preferred
+    except Exception:
+        try:
+            projector = HLRAlgo_Projector(ax2, False, 0.01)   # with tolerance
+        except Exception:
+            logger.warning(f"HLR projector fallback for view {view_name}")
+            projector = HLRAlgo_Projector()                   # bare constructor
 
-    visible_lines = _extract_edges(to_shape.VCompound(), hidden=False)
-    hidden_lines  = _extract_edges(to_shape.HCompound(), hidden=True)
+    # Run Hidden Line Removal
+    hlr = HLRBRep_Algo()
+    hlr.Add(shape)
+    hlr.Projector(projector)
+    hlr.Update()
+    hlr.Hide()
 
-    bbox = _compute_bbox_2d(visible_lines + hidden_lines)
+    hlr_shape = HLRBRep_HLRToShape(hlr)
 
-    logger.debug(
-        f"OCC HLR '{view_name}': "
-        f"{len(visible_lines)} visible, {len(hidden_lines)} hidden lines"
-    )
+    visible = hlr_shape.VCompound()
+    hidden = hlr_shape.HCompound()
+
+    visible_lines = _extract_edges(visible, hidden=False)
+    hidden_lines = _extract_edges(hidden, hidden=True)
+    bbox2d = _compute_bbox_2d(visible_lines + hidden_lines)
     return ProjectionResult(
         view_name=view_name,
         visible_lines=visible_lines,
         hidden_lines=hidden_lines,
-        bounding_box=bbox,
+        bounding_box=bbox2d,
         scale=scale,
     )
-
-
 def _extract_edges(compound: Any, hidden: bool) -> list[Polyline]:
     """Extract polylines from an OCC compound (visible or hidden)."""
     polylines: list[Polyline] = []

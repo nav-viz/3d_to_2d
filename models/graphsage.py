@@ -12,7 +12,7 @@ Unified model builder for the CAD Automation Pipeline.
 from __future__ import annotations
 
 import torch.nn as nn
-from loguru import logger
+from utils.logger import logger
 
 # Import the actual model implementation
 from models.hgt import CADHGT

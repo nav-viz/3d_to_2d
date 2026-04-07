@@ -23,9 +23,13 @@ from __future__ import annotations
 
 from typing import Any
 import numpy as np
-from loguru import logger
-from OCC.Core.BRepBndLib import brepbndlib
-from OCC.Core.BRepGProp import brepgprop
+from utils.logger import logger
+
+try:
+    from OCC.Core.BRepGProp import brepgprop
+    _OCC_AVAILABLE = True
+except ImportError:
+    _OCC_AVAILABLE = False
 # Surface type encoding (must match MFCAD++ convention)
 SURF_TYPE_ENC: dict[str, int] = {
     "Plane":    0,
@@ -83,7 +87,7 @@ def extract_face_features(topology: dict[str, Any]) -> np.ndarray:
         feat[i, 1] = face.get("area", 0.0) / area_max
 
         occ_face = face.get("occ_face")
-        if occ_face is not None:
+        if occ_face is not None and _OCC_AVAILABLE:
             bbox = _get_bbox(occ_face)
             feat[i, 2:5] = bbox
             normal = _get_face_normal(occ_face)
@@ -105,7 +109,7 @@ def _get_bbox(occ_face: Any) -> np.ndarray:
     """Return normalised (dx, dy, dz) bounding box extents."""
     try:
         from OCC.Core.Bnd import Bnd_Box
-        from OCC.Core.BRepBndLib import brepbndlib_Add
+        from OCC.Core.BRepBndLib import brepbndlib
         box = Bnd_Box()
         brepbndlib.Add(occ_face, box)
         xmin, ymin, zmin, xmax, ymax, zmax = box.Get()
@@ -134,7 +138,8 @@ def _get_face_normal(occ_face: Any) -> np.ndarray:
 
 def _get_perimeter(occ_face: Any) -> float:
     """Compute face perimeter (sum of edge lengths)."""
-    try:        
+    try:
+        from OCC.Core.BRepGProp import brepgprop
         from OCC.Core.GProp import GProp_GProps
         from OCC.Core.TopExp import TopExp_Explorer
         from OCC.Core.TopAbs import TopAbs_EDGE

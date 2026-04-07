@@ -38,7 +38,7 @@ import sys
 import time
 from pathlib import Path
 
-from loguru import logger
+from utils.logger import logger
 import yaml
 
 # Ensure project root on path when run directly

@@ -32,7 +32,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
-from loguru import logger
+from utils.logger import logger
 
 try:
     from constraint import Problem, AllDifferentConstraint

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from typing import Any
-from loguru import logger
+from utils.logger import logger
 
 
 # ---------------------------------------------------------------------------

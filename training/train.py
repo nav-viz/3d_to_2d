@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
-from loguru import logger
+from utils.logger import logger
 
 import torch.nn.functional as F
 

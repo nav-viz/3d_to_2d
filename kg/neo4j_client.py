@@ -27,7 +27,7 @@ import json
 import uuid
 from contextlib import contextmanager
 from typing import Any, Generator
-from loguru import logger
+from utils.logger import logger
 
 try:
     from neo4j import GraphDatabase, Driver, Session

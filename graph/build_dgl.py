@@ -22,10 +22,10 @@ from __future__ import annotations
 from typing import Any, Optional
 import numpy as np
 import torch
-from loguru import logger
+from utils.logger import logger
 
 from graph.extract import extract_face_features, FACE_FEAT_DIM
-from graph.mfcad_h5_dataset import MFCAD_H5_Dataset
+from graph.mfcad_h5_dataset import MFCAD_H5_Dataset, _adj_to_src_dst
 
 try:
     import dgl
@@ -58,7 +58,8 @@ def build_from_h5(h5_path: str, key: str) -> tuple:
         E2      = np.array(grp["E_2"],         dtype=np.int32)
         E3      = np.array(grp["E_3"],         dtype=np.int32)
 
-    g = MFCAD_H5_Dataset._build_heterograph(A1_idx, A1_vals, E1, E2, E3, V1)
+    src, dst = _adj_to_src_dst(A1_idx)
+    g = MFCAD_H5_Dataset._build_heterograph(src, dst, A1_vals, E1, E2, E3, V1)
     labels = torch.from_numpy(Y)
     logger.debug(f"H5 graph built: key={key}  n_faces={V1.shape[0]}")
     return g, labels
@@ -97,7 +98,6 @@ def build_from_neo4j(
     # ── Node features ─────────────────────────────────────────────────────────
     feat_mat = extract_face_features(topology)   # (N, 10)
     N = feat_mat.shape[0]
-    print(f"extract_face_features shape = {feat_mat.shape}")
     # ── Adjacency from Neo4j ──────────────────────────────────────────────────
     adjacency = _query_adjacency(model_id, client)
 

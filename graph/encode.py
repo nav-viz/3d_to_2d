@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
-from loguru import logger
+from utils.logger import logger
 
 from graph.extract import SURF_TYPE_ENC, FACE_FEAT_DIM
 

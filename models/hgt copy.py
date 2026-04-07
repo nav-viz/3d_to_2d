@@ -5,7 +5,7 @@ models/hgt.py - Fixed for single node-type graphs (only "face")
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from loguru import logger
+from utils.logger import logger
 
 try:
     import dgl

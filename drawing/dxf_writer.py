@@ -23,7 +23,7 @@ import datetime
 import math
 from pathlib import Path
 from typing import Any
-from loguru import logger
+from utils.logger import logger
 
 try:
     import ezdxf

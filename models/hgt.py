@@ -7,7 +7,7 @@ Stable baseline + mild improvements: higher capacity, better residuals, mild att
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from loguru import logger
+from utils.logger import logger
 
 try:
     import dgl
