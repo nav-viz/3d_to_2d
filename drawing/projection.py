@@ -123,12 +123,13 @@ def project_view(
 # ---------------------------------------------------------------------------
 
 def _project_occ(shape, view_name: str, direction: tuple, scale: float = 1.0):
-    """Safe HLR projection for pythonocc-core 7.7+"""
+    """Safe HLR projection compatible with pythonocc-core 7.7.x"""
     from OCC.Core.HLRAlgo import HLRAlgo_Projector
     from OCC.Core.HLRBRep import HLRBRep_Algo, HLRBRep_HLRToShape
     from OCC.Core.gp import gp_Dir, gp_Ax2, gp_Pnt
+    from loguru import logger
 
-    # Define view direction and up vector
+    # View definitions
     if view_name == "front":
         dir_vec = gp_Dir(0, 0, -1)
         up_vec = gp_Dir(0, 1, 0)
@@ -142,26 +143,30 @@ def _project_occ(shape, view_name: str, direction: tuple, scale: float = 1.0):
         dir_vec = gp_Dir(0, 1, 0)
         up_vec = gp_Dir(0, 0, -1)
     elif view_name == "isometric":
-        dir_vec = gp_Dir(1, 1, 1).Normalized()
-        up_vec = gp_Dir(0, 0, 1)
-    else:  # default front
+        # Safe normalization for isometric
+        dir_vec = gp_Dir(1.0, 1.0, 1.0)
+        # Use the static way to avoid method name issues
+        norm = (dir_vec.X()**2 + dir_vec.Y()**2 + dir_vec.Z()**2)**0.5
+        dir_vec = gp_Dir(dir_vec.X()/norm, dir_vec.Y()/norm, dir_vec.Z()/norm)
+        up_vec = gp_Dir(0.0, 0.0, 1.0)
+    else:  # default
         dir_vec = gp_Dir(0, 0, -1)
         up_vec = gp_Dir(0, 1, 0)
 
-    # Create coordinate system
     ax2 = gp_Ax2(gp_Pnt(0, 0, 0), dir_vec, up_vec)
 
-    # Safe projector creation (most compatible across versions)
+    # Safe projector creation
     try:
-        projector = HLRAlgo_Projector(ax2)                    # Preferred
-    except Exception:
+        projector = HLRAlgo_Projector(ax2)
+    except Exception as e:
+        logger.warning(f"HLR Projector failed with ax2, trying fallback: {e}")
         try:
-            projector = HLRAlgo_Projector(ax2, False, 0.01)   # with tolerance
+            projector = HLRAlgo_Projector(ax2, False, 0.01)
         except Exception:
-            logger.warning(f"HLR projector fallback for view {view_name}")
-            projector = HLRAlgo_Projector()                   # bare constructor
+            logger.warning("Using bare HLRAlgo_Projector")
+            projector = HLRAlgo_Projector()
 
-    # Run Hidden Line Removal
+    # Run HLR
     hlr = HLRBRep_Algo()
     hlr.Add(shape)
     hlr.Projector(projector)
@@ -173,16 +178,15 @@ def _project_occ(shape, view_name: str, direction: tuple, scale: float = 1.0):
     visible = hlr_shape.VCompound()
     hidden = hlr_shape.HCompound()
 
-    visible_lines = _extract_edges(visible, hidden=False)
-    hidden_lines = _extract_edges(hidden, hidden=True)
-    bbox2d = _compute_bbox_2d(visible_lines + hidden_lines)
-    return ProjectionResult(
-        view_name=view_name,
-        visible_lines=visible_lines,
-        hidden_lines=hidden_lines,
-        bounding_box=bbox2d,
-        scale=scale,
-    )
+    bbox = _get_bounding_box(shape)
+
+    return {
+        "visible": visible,
+        "hidden": hidden,
+        "view_name": view_name,
+        "direction": direction,
+        "bounding_box": bbox
+    }
 def _extract_edges(compound: Any, hidden: bool) -> list[Polyline]:
     """Extract polylines from an OCC compound (visible or hidden)."""
     polylines: list[Polyline] = []
