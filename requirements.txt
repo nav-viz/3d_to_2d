@@ -1,0 +1,51 @@
+# =============================================================================
+# requirements.txt  –  CAD Automation Pipeline
+# Python 3.10 | CPU-only build (swap torch index URL for GPU if needed)
+# =============================================================================
+
+# ── Core numerical / ML ──────────────────────────────────────────────────────
+numpy<2.0,>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
+# PyTorch (CPU-only; for CUDA 11.8 replace index-url accordingly)
+--index-url https://download.pytorch.org/whl/cpu
+torch==2.1.2+cpu
+torchvision==0.16.2+cpu
+
+# DGL (CPU) – pinned to 1.1.2 for MFCAD++ heterograph API stability
+--index-url https://data.dgl.ai/wheels/repo.html
+dgl==1.1.2
+
+# ── CAD / geometry ───────────────────────────────────────────────────────────
+# pythonocc-core ships OpenCASCADE bindings (conda preferred, pip fallback)
+# Install via conda: conda install -c conda-forge pythonocc-core=7.9.3
+# or uncomment the pip wheel below (platform-specific):
+# pythonocc-core==7.9.3
+
+# ── Knowledge Graph ──────────────────────────────────────────────────────────
+neo4j>=5.14.1,<6.0              # official Neo4j Python driver
+py2neo==2021.2.4           # optional OGM helper (kept for compatibility)
+
+# ── DXF generation ───────────────────────────────────────────────────────────
+ezdxf==1.1.4
+
+# ── CSP solver (dimension placement) ─────────────────────────────────────────
+python-constraint==1.4.0
+
+# ── Config / CLI / utilities ──────────────────────────────────────────────────
+pyyaml>=6.0.1
+omegaconf>=2.3.0
+loguru>=0.7.2
+tqdm>=4.66.1
+click>=8.1.7
+h5py>=3.10.0              # for MFCAD++ H5DF dataset files
+rich>=13.7.0              # pretty CLI output
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# ── Optional / notebook ───────────────────────────────────────────────────────
+# matplotlib>=3.8.0
+# jupyter>=1.0.0

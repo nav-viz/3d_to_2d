@@ -1,0 +1,9 @@
+- [x] Fix encoding bugs (UTF-8) in `train.py`, `predict.py`, `train_hgt.py`
+- [x] Add `get_training_samples` to `neo4j_client.py`
+- [x] Update `train_hgt.py` to use `get_training_samples` and map labels
+- [x] Verify model architecture compatibility (edge types: adj, convex, concave, smooth)
+- [x] Start retraining and monitor progress (Verified with 1-epoch test)
+- [x] Run end-to-end pipeline test (ingest -> infer -> export)
+- [x] Validate DXF output (Generated 1.6MB DXF successfully)
+- [x] Fix silent crash in OCC feature extraction (GeomLProp → BRepLProp)
+- [x] Fix DGL CUDA/CPU fallback for Windows

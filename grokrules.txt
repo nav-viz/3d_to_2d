@@ -1,0 +1,218 @@
+3D → 2D CAD Automation Pipeline – AI Rules (STRICT)
+
+You must follow ALL rules below when generating, debugging, or modifying code for this project.
+
+1. CORE RULES (NON-NEGOTIABLE)
+
+1. Permanent Solutions Only
+
+Only production-grade, complete, maintainable solutions.
+No TODO, FIXME, placeholders, hacks, or partial code.
+
+If not fully solvable, respond EXACTLY:
+Implementing a permanent solution requires additional steps: <list>.
+I will first create the design document / test case / config extension.
+Shall I proceed?
+
+2. Fixed Architecture (DO NOT CHANGE FLOW)
+STEP → cad/ → kg/ → graph/ → models/ → inference/ → reasoning/ → drawing/ → DXF
+
+No skipping modules
+No reordering
+No shortcuts
+
+Any change requires documentation in: docs/architecture_decisions.md
+Any inter-module call (especially cad → kg) requires explicit ADR documenting the exact function signature and return type discovered during debugging.
+
+3. Configuration-Driven Only
+
+ALL values must come from configs/default.yaml or env
+Use pyyaml + omegaconf
+
+Forbidden:
+Hardcoding
+Magic numbers
+Inline credentials
+
+4. Logging Mandatory
+
+Use loguru ONLY (no print)
+Output: logs/pipeline_<timestamp>.jsonl
+
+Every function must log:
+Entry/exit
+Execution time
+Inputs/outputs
+Confidence scores
+Errors (full traceback)
+External operations (Neo4j, files)
+
+5. Testing Required
+
+Unit tests mandatory (tests/)
+Coverage ≥ 90% for cad/, graph/, reasoning/, drawing/
+Must pass end-to-end with: --max_samples 10 on the main pipeline
+
+Regression tests for bug fixes MUST:
+- Use discovered return types (e.g. dict from load_step)
+- Run with plain pytest (no --max_samples)
+- Assert adjacency_pairs > 0 for OCC 7.9.3 path
+- Include config fixture that safely merges projection.use_triangulation and ingest.adjacency.*
+No merge without tests + regression test for bug fixes
+
+6. Parser & Module Signature Discovery Rules (MANDATORY – Learned from 2026-04-08 Debugging)
+
+Before generating or modifying ANY code that calls functions from other modules (especially cad/parser.py:load_step, classify_faces, etc.):
+
+1. ALWAYS assume load_step(step_file_path: str) returns a DICT with keys including:
+   - "shape" or "occ_shape" or "main_shape" → TopoDS_Shape
+   - "faces", "edges", "vertices" → integers (topology counts)
+   Use safe extraction:
+   occ_shape = parser_result.get("shape") or parser_result.get("occ_shape") or parser_result.get("main_shape")
+   If None, raise clear ValueError with list(parser_result.keys())
+
+2. NEVER pass config to load_step() unless explicitly confirmed in parser.py.
+   Default signature: load_step(step_file_path: str) only.
+
+3. For any inter-module call:
+   - First reproduce the exact call signature and return type using smallest STEP file + LOG_LEVEL=DEBUG
+   - Document the discovered signature/return type in docs/architecture_decisions.md as ADR-YYYY-MM-DD-N
+   - Use safe dict access or getattr with fallback
+   - Add regression test that asserts the exact return structure
+
+4. All OCC-related fixes (pythonocc-core 7.9.3) MUST:
+   - Use only: topexp_MapShapesAndAncestors + TopTools_IndexedDataMapOfShapeListOfShape
+   - Use static brepbndlib.Add(shape, bbox, use_triangulation) where use_triangulation comes from config.projection.use_triangulation
+   - Never use deprecated brepbndlib_Add or MapShapesAndAncestors direct import without TopExp
+   - Guarantee adjacency_pairs > 0 (no fallback allowed in production path)
+
+5. Config updates via OmegaConf:
+   - Use ONLY string dot-notation: OmegaConf.update(cfg, "section.key", value, merge=True)
+   - NEVER pass dict as first argument after cfg
+   - Always ensure sections exist before nested updates
+
+6. Testing Rules Extension for Parser Issues:
+   - Regression tests for kg/ and drawing/ MUST use the exact discovered parser return type
+   - pytest commands must NEVER include pipeline-specific flags like --max_samples
+   - Config fixture MUST safely load + enrich without assuming key order (handle duplicate keys by documenting fix in YAML)
+
+Any violation of signature/return-type discovery = BUG. Must be fixed with new ADR and regression test before any other changes.
+
+2. MODULE RULES
+
+cad/
+
+Use pythonocc-core 7.9.3
+Always run ShapeFix after STEP load
+Extract faces, edges, vertices with persistent IDs
+Deterministic feature recognition (fully logged)
+OCC calls ONLY inside parser.py and brep_features.py
+
+kg/
+
+Use neo4j driver ≥ 5.14.1
+Must use transactions + retry (exponential backoff)
+Write PREDICTED_AS only if confidence ≥ threshold (config)
+No raw Cypher outside neo4j_client.py
+
+graph/
+
+Use dgl 1.1.2
+MUST be heterograph (E1/E2/E3 schema from MFCAD++)
+Support Neo4j + H5 loading
+No homogeneous assumptions
+
+models/
+
+ONLY allowed: CADHGT, CADGraphSAGE
+Use torch 2.1.2
+Save checkpoints with full config + config hash
+No new models without config + training updates
+
+inference/
+
+Per-face softmax predictions
+Output must include:
+face_id, predicted_feature, confidence, model_type
+Neo4j write must be atomic
+No silent failures
+
+reasoning/
+
+View selection MUST be:
+Feature-driven
+Confidence-based
+Adaptive
+Must output ordered views + rationale
+No hardcoded rules
+
+drawing/
+
+Use OCC HLR for projection
+Use python-constraint for placement (CSP)
+Use ezdxf 1.1.4
+Respect config: sheet_size, placement_strategy
+NO manual coordinate adjustments
+
+3. DEBUGGING PROTOCOL (MANDATORY)
+
+Before changing code:
+
+Reproduce with smallest STEP file
+Run with --debug + LOG_LEVEL=DEBUG
+Collect logs + traceback + Neo4j logs
+Identify exact failing module
+THEN fix
+
+When parser/load_step issues appear:
+- Log all keys in parser_result
+- Identify exact return type (dict vs object)
+- Document in new ADR
+- Update only the calling module (kg/ingest.py) – never change cad/parser.py unless OCC calls are involved
+
+After fix:
+
+Add regression test
+Run full test suite
+Commit message must start with: PERMANENT:
+
+4. APPROVED FIX PATTERNS
+
+Neo4j failure → retry + circuit breaker
+Large STEP → streaming processing
+Dimension overlap → extend CSP constraints
+Low GNN confidence → tune config/training (NOT threshold hacks)
+Parser return type mismatch (dict instead of object) → safe .get("shape") extraction + ADR + regression test
+OmegaConf update TypeError → use string dot-notation keys only
+YAML duplicate keys → manual fix + validation step in config fixture
+
+5. DEVELOPMENT RULES
+
+DO
+
+Use package imports (no relative hacks)
+Use type hints everywhere
+Write full docstrings
+Ensure reproducibility
+
+DON’T
+
+No print()
+No commented-out code
+No hardcoding
+No temp files outside logs/ or checkpoints/
+No bypassing pipeline
+No manual drawing fixes
+
+6. ENFORCEMENT
+Any violation = BUG
+Must be fixed immediately + add regression test
+
+7. FINAL AI BEHAVIOR
+
+You MUST:
+
+Follow all rules strictly
+Never generate partial implementations
+Prioritize correctness over speed
+Refuse invalid approaches
