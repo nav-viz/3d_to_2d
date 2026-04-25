@@ -65,6 +65,45 @@ def load_config(path):
     with open(path, encoding="utf-8") as fh:
         return yaml.safe_load(fh)
 
+def _prediction_key(pred, idx):
+    """Build a stable per-face key across possible payload shapes."""
+    for key in ("face_id", "face_idx", "face_index", "id", "node_id"):
+        value = pred.get(key)
+        if value is not None:
+            return f"{key}:{value}"
+    return f"idx:{idx}"
+
+def summarize_predictions(preds, threshold):
+    """
+    Return (faces_detected, machining_features, avg_confidence) from predictions.
+    Deduplicates repeated per-face entries by keeping the highest-confidence one.
+    """
+    if not isinstance(preds, list) or not preds:
+        return 0, 0, 0.0
+
+    best_per_face = {}
+    for idx, pred in enumerate(preds):
+        if not isinstance(pred, dict):
+            continue
+        key = _prediction_key(pred, idx)
+        conf = float(pred.get("confidence", 0.0) or 0.0)
+        existing = best_per_face.get(key)
+        if existing is None or conf > existing.get("_confidence", 0.0):
+            best_per_face[key] = {"prediction": pred, "_confidence": conf}
+
+    unique_preds = [v["prediction"] for v in best_per_face.values()]
+    faces_detected = len(unique_preds)
+    machining_features = sum(
+        1 for p in unique_preds
+        if p.get("feature_type") not in {"Stock", "Low_Confidence"}
+        and float(p.get("confidence", 0.0) or 0.0) >= threshold
+    )
+    avg_confidence = (
+        sum(float(p.get("confidence", 0.0) or 0.0) for p in unique_preds) / faces_detected
+        if faces_detected else 0.0
+    )
+    return faces_detected, machining_features, avg_confidence
+
 def run_pipeline(step_path, config_path):
     cfg = load_config(config_path)
     cfg["inference"]["confidence_threshold"] = confidence_threshold
@@ -141,13 +180,14 @@ if uploaded_file is not None:
             
             # Show Metrics
             col1, col2, col3 = st.columns(3)
+            faces_detected, machining_features, avg_conf = summarize_predictions(
+                preds, confidence_threshold
+            )
             with col1:
-                st.metric("Faces Detected", len(preds))
+                st.metric("Faces Detected", faces_detected)
             with col2:
-                features = [p for p in preds if p.get('feature_type') != 'Stock']
-                st.metric("Machining Features", len(features))
+                st.metric("Machining Features", machining_features)
             with col3:
-                avg_conf = sum(p.get('confidence', 0) for p in preds) / len(preds) if preds else 0
                 st.metric("Avg Confidence", f"{avg_conf:.2%}")
 
             # Show Preview
